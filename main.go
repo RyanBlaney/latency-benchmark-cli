@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"strconv"
+	"os"
 	"strings"
 	"time"
 
@@ -20,11 +20,66 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// Styles for the TUI
+func main() {
+	rootCmd := &cobra.Command{
+		Use:   "latency-benchmark-cli",
+		Short: "A beautiful CLI tool for measuring audio stream latency",
+		Long:  `Compare two audio streams to measure latency, alignment, and similarity with a gorgeous terminal interface.`,
+	}
+
+	compareCmd := &cobra.Command{
+		Use:   "compare [STREAM1] [STREAM2]",
+		Short: "Compare two audio streams",
+		Long:  `Compare two audio streams to measure their relative latency and content similarity.`,
+		Args:  cobra.ExactArgs(2),
+		Run: func(cmd *cobra.Command, args []string) {
+			duration, err := cmd.Flags().GetDuration("duration")
+			if err != nil {
+				log.Fatalf("failed to get duration: %v", err)
+			}
+
+			// Run the TUI
+			m := initialModel(args[0], args[1], duration)
+			p := tea.NewProgram(m, tea.WithAltScreen())
+
+			finalModel, err := p.Run()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "\nTUI Error: %v\n", err)
+				os.Exit(1)
+			}
+
+			// Check if the final model has an error state
+			if finalModel != nil {
+				if model, ok := finalModel.(model); ok {
+					if model.err != nil {
+						fmt.Fprintf(os.Stderr, "\nApplication Error: %v\n", model.err)
+						os.Exit(1)
+					}
+					// Optionally print success message or results summary
+					if model.currentStage == StageComplete && model.result != nil {
+						fmt.Printf("\nComparison completed successfully!\n")
+						fmt.Printf("Latency: %.3f seconds\n", model.result.AlignmentSeconds)
+						fmt.Printf("Confidence: %.2f%%\n", model.result.OffsetConfidence*100)
+					}
+				}
+			}
+		},
+	}
+
+	compareCmd.Flags().DurationP("duration", "d", 200*time.Second, "Sample duration in seconds")
+
+	rootCmd.AddCommand(compareCmd)
+
+	if err := rootCmd.Execute(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+// Styles for the TUI - TuneIn blue theme
 var (
 	titleStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("#7C3AED")).
+			Foreground(lipgloss.Color("#0080FF")).
 			MarginBottom(1)
 
 	subtitleStyle = lipgloss.NewStyle().
@@ -32,12 +87,13 @@ var (
 			MarginBottom(1)
 
 	progressStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#0080FF")).
 			MarginTop(1).
 			MarginBottom(1)
 
 	resultStyle = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("#10B981")).
+			BorderForeground(lipgloss.Color("#0080FF")).
 			Padding(1).
 			MarginTop(1)
 
@@ -54,7 +110,7 @@ var (
 			Bold(true)
 
 	metricLabelStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#8B5CF6")).
+				Foreground(lipgloss.Color("#0080FF")).
 				Bold(true)
 
 	metricValueStyle = lipgloss.NewStyle().
@@ -155,11 +211,11 @@ func initialModel(stream1URL, stream2URL string, duration time.Duration) model {
 	// Initialize spinner
 	s := spinner.New()
 	s.Spinner = spinner.Dot
-	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#7C3AED"))
+	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#0080FF")) // TuneIn blue
 
 	// Create measurement engine
 	engineConfig := &latency.Settings{
-		OperationTimeout:         (duration + (duration / 2)) * time.Second,
+		OperationTimeout:         duration + (duration / 2),
 		SampleDuration:           duration,
 		MinAlignmentConfidence:   0.33,
 		MaxAlignmentOffset:       (duration - (duration / 4)).Seconds(),
@@ -361,7 +417,7 @@ func (m model) runComparison() {
 				endpoint2 = result.endpoint
 				audioData2 = result.audioData
 			}
-		case <-time.After((m.sampleDuration + (m.sampleDuration / 5)) * time.Second):
+		case <-time.After(m.sampleDuration + (m.sampleDuration / 5)):
 			m.sendError(fmt.Errorf("timeout waiting for downloads"))
 			return
 		}
@@ -397,7 +453,6 @@ func (m model) runComparison() {
 			m.sendProgress(StageDeterminingContentType2, 1.0, "Stream 2 Content Type Successfully Detected")
 			time.Sleep(3 * time.Second)
 			contentChan <- contentResult{contentType: string(contentType), streamNum: 2}
-
 		}()
 	}
 
@@ -495,7 +550,7 @@ func (m model) runComparison() {
 				stream2Result.FingerprintTime = result.fingerprintTime
 				stream2Result.TotalProcessingTime = result.totalTime
 			}
-		case <-time.After((m.sampleDuration + (m.sampleDuration / 5)) * time.Second):
+		case <-time.After(m.sampleDuration + (m.sampleDuration / 5)):
 			m.sendError(fmt.Errorf("timeout waiting for downloads"))
 			return
 		}
@@ -585,7 +640,6 @@ func (m model) runComparison() {
 			IsValidAlignment:    alignmentResult.IsValidAlignment,
 			IsValidMatch:        false,
 		}
-
 	}
 
 	// Send completion message
@@ -703,33 +757,43 @@ func (m model) View() string {
 func (m model) renderProgress() string {
 	var b strings.Builder
 
-	// Title
-	b.WriteString(titleStyle.Render("🎵 Latency Benchmark CLI"))
+	// Title with ASCII art
+	titleArt := `
+╭─────────────────────────────────────────────────╮
+│                                                 │
+│   █▄▄ ██▀ █▄░█ █▀▀ █░█ █▀▄▀█ ▄▀█ █▀█ █▄▀        │
+│   █▄█ █▄▄ █░▀█ █▄▄ █▀█ █░▀░█ █▀█ █▀▄ █░█        │
+│                                                 │
+│            S T R E A M   L A T E N C Y          │
+│                                                 │
+╰─────────────────────────────────────────────────╯`
+
+	b.WriteString(titleStyle.Render(titleArt))
 	b.WriteString("\n")
 	b.WriteString(subtitleStyle.Render("Comparing audio streams for latency and similarity"))
 	b.WriteString("\n\n")
 
-	// Stream URLs
-	b.WriteString(fmt.Sprintf("📡 Stream 1: %s\n", m.stream1URL))
-	b.WriteString(fmt.Sprintf("📡 Stream 2: %s\n", m.stream2URL))
-	b.WriteString(fmt.Sprintf("⏱️  Duration: %.1fs\n\n", m.sampleDuration.Seconds()))
+	// Stream URLs with better formatting
+	b.WriteString(fmt.Sprintf("┌─ Stream 1: %s\n", m.stream1URL))
+	b.WriteString(fmt.Sprintf("├─ Stream 2: %s\n", m.stream2URL))
+	b.WriteString(fmt.Sprintf("└─ Duration: %.1fs\n\n", m.sampleDuration.Seconds()))
 
-	// Progress bars
+	// Progress bars with better icons
 	stages := []struct {
 		stage Stage
 		icon  string
 		label string
 		show  bool
 	}{
-		{StageDownloadingStream1, "⬇️", "Downloading Stream 1", m.currentStage <= StageDownloadingStream2},
-		{StageDownloadingStream2, "⬇️", "Downloading Stream 2", m.currentStage <= StageDownloadingStream2},
-		{StageDownloadingStream1, "⬇️", "Determining Stream 1 Content Type", m.currentStage >= StageDeterminingContentType1 && m.currentStage <= StageDeterminingContentType2},
-		{StageDownloadingStream2, "⬇️", "Determining Stream 2 Content Type", m.currentStage >= StageDeterminingContentType1 && m.currentStage <= StageDeterminingContentType2},
-		{StageFeatureExtraction1, "🔍", "Feature Extraction 1", m.currentStage >= StageFeatureExtraction1 && m.currentStage <= StageFeatureExtraction2},
-		{StageFeatureExtraction2, "🔍", "Feature Extraction 2", m.currentStage >= StageFeatureExtraction1 && m.currentStage <= StageFeatureExtraction2},
-		{StageTemporalAlignment, "🎯", "Temporal Alignment", m.currentStage == StageTemporalAlignment},
-		{StageTruncation, "✂️", "Truncating to Alignment", m.currentStage == StageTruncation},
-		{StageFingerprintComparison, "📊", "Fingerprint Comparison", m.currentStage == StageFingerprintComparison},
+		{StageDownloadingStream1, "↓", "Downloading Stream 1", m.currentStage <= StageDownloadingStream2},
+		{StageDownloadingStream2, "↓", "Downloading Stream 2", m.currentStage <= StageDownloadingStream2},
+		{StageDeterminingContentType1, "?", "Determining Stream 1 Content Type", m.currentStage >= StageDeterminingContentType1 && m.currentStage <= StageDeterminingContentType2},
+		{StageDeterminingContentType2, "?", "Determining Stream 2 Content Type", m.currentStage >= StageDeterminingContentType1 && m.currentStage <= StageDeterminingContentType2},
+		{StageFeatureExtraction1, "∿", "Feature Extraction 1", m.currentStage >= StageFeatureExtraction1 && m.currentStage <= StageFeatureExtraction2},
+		{StageFeatureExtraction2, "∿", "Feature Extraction 2", m.currentStage >= StageFeatureExtraction1 && m.currentStage <= StageFeatureExtraction2},
+		{StageTemporalAlignment, "⟷", "Temporal Alignment", m.currentStage == StageTemporalAlignment},
+		{StageTruncation, "▢", "Truncating to Alignment", m.currentStage == StageTruncation},
+		{StageFingerprintComparison, "≈", "Fingerprint Comparison", m.currentStage == StageFingerprintComparison},
 	}
 
 	for _, s := range stages {
@@ -746,7 +810,7 @@ func (m model) renderProgress() string {
 			} else if p.Percent() > 0 {
 				status = m.spinner.View() // Show spinner for any active progress
 			} else {
-				status = "⏳"
+				status = "○"
 			}
 
 			progressBar := progressStyle.Render(p.View())
@@ -760,6 +824,66 @@ func (m model) renderProgress() string {
 	return b.String()
 }
 
+func (m model) renderInterpretation() string {
+	if m.result == nil {
+		return ""
+	}
+
+	var interpretation strings.Builder
+	interpretation.WriteString(metricLabelStyle.Render("◉ Interpretation:") + "\n")
+
+	// Alignment interpretation
+	if m.result.AlignmentSeconds > 0.1 {
+		interpretation.WriteString("• " + warningStyle.Render(fmt.Sprintf("Stream 2 is %.2fs behind Stream 1", m.result.AlignmentSeconds)) + "\n")
+	} else if m.result.AlignmentSeconds < -0.1 {
+		interpretation.WriteString("• " + warningStyle.Render(fmt.Sprintf("Stream 1 is %.2fs behind Stream 2", -m.result.AlignmentSeconds)) + "\n")
+	} else {
+		interpretation.WriteString("• " + successStyle.Render("Streams are well synchronized (< 0.1s difference)") + "\n")
+	}
+
+	// Confidence interpretation
+	if m.result.OffsetConfidence >= 0.8 {
+		interpretation.WriteString("• " + successStyle.Render("High confidence in alignment measurement") + "\n")
+	} else if m.result.OffsetConfidence >= 0.6 {
+		interpretation.WriteString("• " + warningStyle.Render("Moderate confidence in alignment measurement") + "\n")
+	} else {
+		interpretation.WriteString("• " + errorStyle.Render("Low confidence in alignment measurement") + "\n")
+	}
+
+	// Similarity interpretation
+	if m.result.OverallSimilarity >= 0.8 {
+		interpretation.WriteString("• " + successStyle.Render("Very similar content detected") + "\n")
+	} else if m.result.OverallSimilarity >= 0.6 {
+		interpretation.WriteString("• " + warningStyle.Render("Moderately similar content") + "\n")
+	} else {
+		interpretation.WriteString("• " + errorStyle.Render("Low content similarity - may be different sources") + "\n")
+	}
+
+	return interpretation.String()
+}
+
+func (m model) renderError() string {
+	var b strings.Builder
+
+	errorArt := `
+╭─────────────────────────────────────────────────╮
+│                                                 │
+│         █▀▀ █▀█ █▀█ █▀█ █▀█                     │
+│         ██▄ █▀▄ █▀▄ █▄█ █▀▄                     │
+│                                                 │
+│              C O M P A R I S O N                │
+│                F A I L E D                      │
+│                                                 │
+╰─────────────────────────────────────────────────╯`
+
+	b.WriteString(titleStyle.Render(errorArt))
+	b.WriteString("\n\n")
+	b.WriteString(errorStyle.Render(fmt.Sprintf("Error: %v", m.err)))
+	b.WriteString("\n\n")
+	b.WriteString(subtitleStyle.Render("Press 'q' or Ctrl+C to exit"))
+	return b.String()
+}
+
 func (m model) renderResults() string {
 	if m.result == nil {
 		return errorStyle.Render("No results available")
@@ -768,7 +892,17 @@ func (m model) renderResults() string {
 	var b strings.Builder
 
 	// Title
-	b.WriteString(titleStyle.Render("🎉 Comparison Complete!"))
+	completionArt := `
+╭─────────────────────────────────────────────────╮
+│                                                 │
+│         ▄▀█ █▄░█ ▄▀█ █░░ █▄█ █▀ █ █▀▀           │
+│         █▀█ █░▀█ █▀█ █▄▄ ░█░ ▄█ █ ▄▄█           │
+│                                                 │
+│            C O M P L E T E                      │
+│                                                 │
+╰─────────────────────────────────────────────────╯`
+
+	b.WriteString(titleStyle.Render(completionArt))
 	b.WriteString("\n\n")
 
 	// Key metrics in a nice box
@@ -783,27 +917,25 @@ func (m model) renderResults() string {
 			"  %s %.2f%%\n"+
 			"  %s %.2f%%\n\n"+
 			"%s\n"+
-			"  %s %v\n"+
-			"  %s %v\n"+
-			"  %s %.1fs / %.1fs\n"+
-			"  %s %v",
+			"  %s %s\n"+
+			"  %s %s\n"+
+			"  %s %.1fs / %.1fs",
 
-		metricLabelStyle.Render("📡 Stream 1:"), m.result.Stream1URL,
-		metricLabelStyle.Render("📡 Stream 2:"), m.result.Stream2URL,
-		metricLabelStyle.Render("⏱️  Sample:"), fmt.Sprintf("%.1fs", m.sampleDuration.Seconds()),
-		metricLabelStyle.Render("🕐 Processed:"), m.result.TotalProcessingTime.Round(time.Millisecond),
+		metricLabelStyle.Render("┌─ Stream 1:"), m.result.Stream1URL,
+		metricLabelStyle.Render("├─ Stream 2:"), m.result.Stream2URL,
+		metricLabelStyle.Render("├─ Sample:"), fmt.Sprintf("%.1fs", m.sampleDuration.Seconds()),
+		metricLabelStyle.Render("└─ Processed:"), m.result.TotalProcessingTime.Round(time.Millisecond),
 
-		metricLabelStyle.Render("🎯 Alignment Results:"),
+		metricLabelStyle.Render("⟷ Alignment Results:"),
 		metricLabelStyle.Render("   Offset:"), m.result.AlignmentSeconds,
 		metricLabelStyle.Render("   Confidence:"), m.result.OffsetConfidence*100,
 		metricLabelStyle.Render("   Similarity:"), m.result.OverallSimilarity*100,
 		metricLabelStyle.Render("   Quality:"), m.result.QualityScore*100,
 
-		metricLabelStyle.Render("📊 Technical Details:"),
+		metricLabelStyle.Render("⚙ Technical Details:"),
 		metricLabelStyle.Render("   Valid Alignment:"), formatBool(m.result.IsValidAlignment),
 		metricLabelStyle.Render("   Valid Match:"), formatBool(m.result.IsValidMatch),
 		metricLabelStyle.Render("   Durations:"), m.result.Stream1Duration.Seconds(), m.result.Stream2Duration.Seconds(),
-		metricLabelStyle.Render("   TTFB:"), formatTTFB(m.result.Stream1TTFB, m.result.Stream2TTFB),
 	)
 
 	b.WriteString(resultStyle.Render(results))
@@ -815,106 +947,9 @@ func (m model) renderResults() string {
 	return b.String()
 }
 
-func (m model) renderInterpretation() string {
-	if m.result == nil {
-		return ""
-	}
-
-	var interpretation strings.Builder
-	interpretation.WriteString(metricLabelStyle.Render("🧠 Interpretation:") + "\n")
-
-	// Alignment interpretation
-	if m.result.AlignmentSeconds > 0.1 {
-		interpretation.WriteString(warningStyle.Render(fmt.Sprintf("• Stream 2 is %.2fs behind Stream 1\n", m.result.AlignmentSeconds)))
-	} else if m.result.AlignmentSeconds < -0.1 {
-		interpretation.WriteString(warningStyle.Render(fmt.Sprintf("• Stream 1 is %.2fs behind Stream 2\n", -m.result.AlignmentSeconds)))
-	} else {
-		interpretation.WriteString(successStyle.Render("• Streams are well synchronized (< 0.1s difference)\n"))
-	}
-
-	// Confidence interpretation
-	if m.result.OffsetConfidence >= 0.8 {
-		interpretation.WriteString(successStyle.Render("• High confidence in alignment measurement\n"))
-	} else if m.result.OffsetConfidence >= 0.6 {
-		interpretation.WriteString(warningStyle.Render("• Moderate confidence in alignment measurement\n"))
-	} else {
-		interpretation.WriteString(errorStyle.Render("• Low confidence in alignment measurement\n"))
-	}
-
-	// Similarity interpretation
-	if m.result.OverallSimilarity >= 0.8 {
-		interpretation.WriteString(successStyle.Render("• Very similar content detected\n"))
-	} else if m.result.OverallSimilarity >= 0.6 {
-		interpretation.WriteString(warningStyle.Render("• Moderately similar content\n"))
-	} else {
-		interpretation.WriteString(errorStyle.Render("• Low content similarity - may be different sources\n"))
-	}
-
-	return interpretation.String()
-}
-
-func (m model) renderError() string {
-	var b strings.Builder
-	b.WriteString(titleStyle.Render("❌ Comparison Failed"))
-	b.WriteString("\n\n")
-	b.WriteString(errorStyle.Render(fmt.Sprintf("Error: %v", m.err)))
-	b.WriteString("\n\n")
-	b.WriteString(subtitleStyle.Render("Press 'q' or Ctrl+C to exit"))
-	return b.String()
-}
-
 func formatBool(b bool) string {
 	if b {
 		return successStyle.Render("Yes")
 	}
 	return errorStyle.Render("No")
-}
-
-func formatTTFB(ttfb1, ttfb2 time.Duration) string {
-	return fmt.Sprintf("%v / %v", ttfb1.Round(time.Millisecond), ttfb2.Round(time.Millisecond))
-}
-
-// CLI setup
-func main() {
-	var rootCmd = &cobra.Command{
-		Use:   "latency-benchmark-cli",
-		Short: "A beautiful CLI tool for measuring audio stream latency",
-		Long:  `Compare two audio streams to measure latency, alignment, and similarity with a gorgeous terminal interface.`,
-	}
-
-	var compareCmd = &cobra.Command{
-		Use:   "compare [STREAM1] [STREAM2]",
-		Short: "Compare two audio streams",
-		Long:  `Compare two audio streams to measure their relative latency and content similarity.`,
-		Args:  cobra.ExactArgs(2),
-		Run: func(cmd *cobra.Command, args []string) {
-			duration, _ := cmd.Flags().GetString("duration")
-
-			// Parse duration
-			sampleDuration := 200 * time.Second // default
-			if duration != "" {
-				if d, err := time.ParseDuration(duration + "s"); err == nil {
-					sampleDuration = d
-				} else if seconds, err := strconv.Atoi(duration); err == nil {
-					sampleDuration = time.Duration(seconds) * time.Second
-				}
-			}
-
-			// Run the TUI
-			m := initialModel(args[0], args[1], sampleDuration)
-			p := tea.NewProgram(m, tea.WithAltScreen())
-
-			if _, err := p.Run(); err != nil {
-				log.Fatal(err)
-			}
-		},
-	}
-
-	compareCmd.Flags().StringP("duration", "d", "200", "Sample duration in seconds")
-
-	rootCmd.AddCommand(compareCmd)
-
-	if err := rootCmd.Execute(); err != nil {
-		log.Fatal(err)
-	}
 }

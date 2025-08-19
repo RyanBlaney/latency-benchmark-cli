@@ -294,7 +294,7 @@ func (e *MeasurementEngine) MeasureAlignment(ctx context.Context, stream1, strea
 
 	// Extract alignment features
 	contentType := e.parseContentType(stream1.Endpoint.ContentType)
-	featureConfig := e.createFeatureConfig(contentType, stream1.AudioData.SampleRate)
+	featureConfig := e.createFeatureConfig(stream1.AudioData.SampleRate)
 	alignmentConfig := config.AlignmentConfigForContent(contentType)
 
 	alignmentExtractor := extractors.NewAlignmentExtractorWithMaxLag(
@@ -313,8 +313,7 @@ func (e *MeasurementEngine) MeasureAlignment(ctx context.Context, stream1, strea
 	}
 
 	measurement.AlignmentResult = alignmentFeatures
-	measurement.IsValidAlignment =
-		alignmentFeatures.OffsetConfidence >= e.minAlignmentConf
+	measurement.IsValidAlignment = alignmentFeatures.OffsetConfidence >= e.minAlignmentConf
 
 	if measurement.IsValidAlignment {
 		measurement.LatencySeconds = alignmentFeatures.TemporalOffset
@@ -361,7 +360,6 @@ func (e *MeasurementEngine) TruncateToAlignment(ctx context.Context, alignment *
 		alignment.Stream1.AudioData.SampleRate,
 		alignment.AlignmentResult,
 	)
-
 	if err != nil {
 		alignment.Error = fmt.Errorf("truncation failed: %w", err)
 		return alignment
@@ -486,7 +484,7 @@ func (e *MeasurementEngine) loadAudio(ctx context.Context, endpoint *StreamEndpo
 	if e.isLocalFile(endpoint.URL) {
 		return e.loadLocalFile(endpoint.URL, endpoint.ContentType)
 	}
-	return e.loadStreamURL(ctx, endpoint.URL, endpoint.ContentType)
+	return e.loadStreamURL(ctx, endpoint.URL)
 }
 
 // isLocalFile checks if the input is a local file
@@ -527,7 +525,7 @@ func (e *MeasurementEngine) loadLocalFile(filePath, contentType string) (*common
 }
 
 // loadStreamURL loads audio from a stream URL
-func (e *MeasurementEngine) loadStreamURL(ctx context.Context, url, contentType string) (*common.AudioData, time.Duration, error) {
+func (e *MeasurementEngine) loadStreamURL(ctx context.Context, url string) (*common.AudioData, time.Duration, error) {
 	managerConfig := &stream.ManagerConfig{
 		StreamTimeout:        e.operationTimeout,
 		OverallTimeout:       e.operationTimeout + ((e.operationTimeout / 10) * time.Second),
@@ -662,7 +660,7 @@ func (e *MeasurementEngine) parseContentType(contentTypeStr string) config.Conte
 }
 
 // createFeatureConfig creates feature configuration for alignment
-func (e *MeasurementEngine) createFeatureConfig(contentType config.ContentType, sampleRate int) *config.FeatureConfig {
+func (e *MeasurementEngine) createFeatureConfig(sampleRate int) *config.FeatureConfig {
 	return &config.FeatureConfig{
 		WindowSize: 1024,
 		HopSize:    256,

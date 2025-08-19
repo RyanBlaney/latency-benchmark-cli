@@ -46,8 +46,8 @@ func DefaultSettings() *Settings {
 
 	settings := &Settings{
 		SampleDuration:            sampleDuration * time.Second,
-		OperationTimeout:          sampleDuration - (sampleDuration / 5.0),
-		MinAlignmentConfidence:    0.33,
+		OperationTimeout:          (sampleDuration * time.Second) - ((sampleDuration * time.Second) / 5),
+		MinAlignmentConfidence:    0.55,
 		MinFingerprintSimilarity:  0.75,
 		Verbose:                   false,
 		SkipFingerprintComparison: false,
